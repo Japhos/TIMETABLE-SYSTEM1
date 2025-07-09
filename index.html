@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Timetable System - Nyamira National Polytechnic</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.4.0/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; background-color: #f9f9f9; }
+    h1 { text-align: center; color: green; }
+    form, #filterSection { margin-bottom: 20px; }
+    label { margin-right: 10px; color: green; }
+    select, input { margin: 5px; padding: 5px; font-size: 14px; }
+    button { padding: 5px 10px; cursor: pointer; color: green; }
+    table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+    table, th, td { border: 1px solid #ccc; }
+    th, td { text-align: center; padding: 10px; }
+    th { background-color: #f0f0f0; color: green; }
+    .error { color: red; margin-top: 10px; font-weight: bold; }
+    tr.conflict { background-color: #ffcccc; color: #a00; }
+    @media print { button, #filterSection, #searchBar { display: none; } }
+  </style>
+</head>
+<body>
+  <h1>Timetable System - Nyamira National Polytechnic</h1>
+
+  <!-- Login Form -->
+  <div id="loginForm">
+    <form id="login">
+      <label for="username">Username:</label>
+      <input type="text" id="username" required><br><br>
+      <label for="password">Password:</label>
+      <input type="password" id="password" required><br><br>
+      <button type="submit">Login</button>
+      <p class="error" id="loginError"></p>
+    </form>
+  </div>
+
+  <!-- User Management -->
+  <div id="userManagement" style="display:none;">
+    <h3 style="color: green;">Add New User</h3>
+    <form id="addUserForm">
+      <label for="newUsername">Username:</label>
+      <input type="text" id="newUsername" required>
+      <label for="newPassword">Password:</label>
+      <input type="password" id="newPassword" required>
+      <label for="newRole">Role:</label>
+      <select id="newRole" required>
+        <option value="user">User</option>
+        <option value="admin">Admin</option>
+      </select>
+      <button type="submit">Add User</button>
+      <p class="error" id="userAddError"></p>
+    </form>
+    <h3 style="color: green;">Existing Users</h3>
+    <ul id="userList"></ul>
+  </div>
+
+  <!-- Timetable Section -->
+  <div id="timetableSection" style="display:none;">
+    <form id="timetableForm" style="display:none;">
+      <label for="day">Day:</label>
+      <select id="day" required>
+        <option value="">Select</option>
+        <option>Monday</option><option>Tuesday</option><option>Wednesday</option>
+        <option>Thursday</option><option>Friday</option>
+      </select>
+      <label for="course">Course:</label>
+      <select id="course" required>
+        <option value="">Select</option>
+        <option>D2</option><option>D3</option><option>L5 MS24</option>
+        <option>L5J25</option><option>L5S23</option><option>L6 MS24</option>
+        <option>L6S23</option><option>L6J25</option>
+      </select>
+      <label for="unit">Unit:</label>
+      <input type="text" id="unit" required placeholder="Enter unit name">
+      <label for="instructor">Instructor:</label>
+      <input type="text" id="instructor" required placeholder="Enter instructor name">
+      <label for="time">Time:</label>
+      <select id="time" required>
+        <option value="">Select</option>
+        <option>7:30</option><option>9:30</option><option>11:30</option>
+        <option>1:30</option><option>3:30-5:30</option>
+      </select>
+      <button type="submit">Add</button>
+    </form>
+
+    <p class="error" id="error"></p>
+
+    <div id="filterSection">
+      <label for="searchBar">Search:</label>
+      <input type="text" id="searchBar" placeholder="Search by instructor, course, unit..." oninput="searchTimetable()">
+      <button onclick="exportToPDF()">Export to PDF</button>
+      <button onclick="printTimetable()">Print Timetable</button>
+      <button onclick="exportToExcel()">Export to Excel</button>
+      <input type="file" id="importFile" accept=".xlsx, .xls" />
+      <button onclick="importFromExcel()">Import from Excel</button>
+    </div>
+
+    <button id="logoutButton" onclick="logout()">Logout</button>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Day</th><th>Course</th><th>Unit</th><th>Instructor</th><th>Time</th><th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="timetableBody"></tbody>
+    </table>
+  </div>
+
+  <script>
+    const loginForm = document.getElementById('loginForm');
+    const timetableSection = document.getElementById('timetableSection');
+    const timetableForm = document.getElementById('timetableForm');
+    const errorElement = document.getElementById('error');
+    const loginErrorElement = document.getElementById('loginError');
+    const userManagement = document.getElementById('userManagement');
+    const userList = document.getElementById('userList');
+    const addUserForm = document.getElementById('addUserForm');
+    const userAddError = document.getElementById('userAddError');
+    const searchBar = document.getElementById('searchBar');
+    const timetableBody = document.getElementById('timetableBody');
+
+    function getUsers() {
+      return JSON.parse(localStorage.getItem('users')) || {
+        admin: { password: 'admin123', role: 'admin' }
+      };
+    }
+
+    function saveUsers(users) { localStorage.setItem('users', JSON.stringify(users)); }
+
+    function renderUserList() {
+      const users = getUsers();
+      userList.innerHTML = '';
+      for (let username in users) {
+        const li = document.createElement('li');
+        if (username === 'admin') {
+          li.innerHTML = `${username} <span style="color:gray;">(Master Admin)</span>`;
+        } else {
+          li.innerHTML = `${username} - Role: 
+            <select onchange="changeUserRole('${username}', this.value)">
+              <option value="user" ${users[username].role === 'user' ? 'selected' : ''}>User</option>
+              <option value="admin" ${users[username].role === 'admin' ? 'selected' : ''}>Admin</option>
+            </select>
+            <button onclick="deleteUser('${username}')">Delete</button>`;
+        }
+        userList.appendChild(li);
+      }
+    }
+
+    function changeUserRole(username, newRole) {
+      const users = getUsers();
+      users[username].role = newRole;
+      saveUsers(users);
+      renderUserList();
+    }
+
+    function deleteUser(username) {
+      const users = getUsers();
+      delete users[username];
+      saveUsers(users);
+      renderUserList();
+    }
+
+    function saveTimetable(timetable) {
+      localStorage.setItem('timetable', JSON.stringify(timetable));
+    }
+
+    function loadTimetable(filter = '') {
+      const timetable = JSON.parse(localStorage.getItem('timetable')) || [];
+      timetableBody.innerHTML = '';
+      timetable.forEach((entry, index) => {
+        if (!filter || filter(entry)) {
+          const row = document.createElement('tr');
+          row.innerHTML = `
+            <td>${entry.day}</td>
+            <td>${entry.course}</td>
+            <td>${entry.unit}</td>
+            <td>${entry.instructor}</td>
+            <td>${entry.time}</td>
+            <td>${sessionStorage.getItem('loggedInUserRole') === 'admin' ? `<button onclick="deleteEntry(${index})">Delete</button>` : ''}</td>
+          `;
+          timetableBody.appendChild(row);
+        }
+      });
+    }
+
+    function deleteEntry(index) {
+      const timetable = JSON.parse(localStorage.getItem('timetable')) || [];
+      timetable.splice(index, 1);
+      saveTimetable(timetable);
+      loadTimetable();
+    }
+
+    function exportToPDF() {
+      const { jsPDF } = window.jspdf;
+      const pdf = new jsPDF();
+      pdf.text("Timetable - Nyamira National Polytechnic", 10, 10);
+      const timetable = JSON.parse(localStorage.getItem('timetable')) || [];
+      let y = 20;
+      timetable.forEach(entry => {
+        pdf.text(`${entry.day} | ${entry.course} | ${entry.unit} | ${entry.instructor} | ${entry.time}`, 10, y);
+        y += 10;
+      });
+      pdf.save("timetable.pdf");
+    }
+
+    function exportToExcel() {
+      const timetable = JSON.parse(localStorage.getItem('timetable')) || [];
+      if (timetable.length === 0) {
+        alert("No timetable data to export.");
+        return;
+      }
+
+      const worksheetData = timetable.map(entry => ({
+        Day: entry.day, Course: entry.course, Unit: entry.unit,
+        Instructor: entry.instructor, Time: entry.time
+      }));
+
+      const worksheet = XLSX.utils.json_to_sheet(worksheetData);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Timetable");
+      XLSX.writeFile(workbook, "Timetable.xlsx");
+    }
+
+    function importFromExcel() {
+      const fileInput = document.getElementById('importFile');
+      const file = fileInput.files[0];
+      if (!file) {
+        alert("Please select an Excel file first.");
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = function (e) {
+        const data = new Uint8Array(e.target.result);
+        const workbook = XLSX.read(data, { type: 'array' });
+        const sheet = workbook.Sheets[workbook.SheetNames[0]];
+        const importedData = XLSX.utils.sheet_to_json(sheet);
+        if (!Array.isArray(importedData) || importedData.length === 0) {
+          alert("Invalid or empty Excel file.");
+          return;
+        }
+        const formatted = importedData.map(entry => ({
+          day: entry.Day || '', course: entry.Course || '',
+          unit: entry.Unit || '', instructor: entry.Instructor || '', time: entry.Time || ''
+        }));
+        localStorage.setItem('timetable', JSON.stringify(formatted));
+        loadTimetable();
+        alert("Timetable data imported successfully!");
+      };
+      reader.readAsArrayBuffer(file);
+    }
+
+    function printTimetable() {
+      const timetable = document.querySelector('table').outerHTML;
+      const originalContent = document.body.innerHTML;
+      document.body.innerHTML = `<h1>Timetable - Nyamira National Polytechnic</h1>${timetable}`;
+      window.print();
+      document.body.innerHTML = originalContent;
+      loadTimetable();
+    }
+
+    function searchTimetable() {
+      const value = searchBar.value.toLowerCase();
+      loadTimetable(entry =>
+        entry.day.toLowerCase().includes(value) ||
+        entry.course.toLowerCase().includes(value) ||
+        entry.unit.toLowerCase().includes(value) ||
+        entry.instructor.toLowerCase().includes(value)
+      );
+    }
+
+    loginForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const username = document.getElementById('username').value;
+      const password = document.getElementById('password').value;
+      const users = getUsers();
+      if (users[username] && users[username].password === password) {
+        sessionStorage.setItem('loggedInUser', username);
+        sessionStorage.setItem('loggedInUserRole', users[username].role);
+        loginForm.style.display = 'none';
+        timetableSection.style.display = 'block';
+        loadTimetable();
+        if (users[username].role === 'admin') {
+          timetableForm.style.display = 'block';
+          userManagement.style.display = 'block';
+          renderUserList();
+        }
+      } else {
+        loginErrorElement.textContent = 'Invalid username or password.';
+      }
+    });
+
+    addUserForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const username = document.getElementById('newUsername').value.trim();
+      const password = document.getElementById('newPassword').value.trim();
+      const role = document.getElementById('newRole').value;
+      if (!username || !password || !role) {
+        userAddError.textContent = 'All fields are required.';
+        return;
+      }
+      const users = getUsers();
+      if (users[username]) {
+        userAddError.textContent = 'User already exists.';
+        return;
+      }
+      users[username] = { password, role };
+      saveUsers(users);
+      userAddError.textContent = 'User added successfully.';
+      addUserForm.reset();
+      renderUserList();
+    });
+
+    timetableForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      if (sessionStorage.getItem('loggedInUserRole') !== 'admin') {
+        errorElement.textContent = 'You do not have permission to add timetable entries.';
+        return;
+      }
+      const day = document.getElementById('day').value;
+      const course = document.getElementById('course').value;
+      const unit = document.getElementById('unit').value;
+      const instructor = document.getElementById('instructor').value;
+      const time = document.getElementById('time').value;
+      const timetable = JSON.parse(localStorage.getItem('timetable')) || [];
+      const conflicts = timetable.filter(entry =>
+        entry.day === day && entry.time === time &&
+        (entry.instructor === instructor || entry.course === course || entry.unit === unit)
+      );
+      if (conflicts.length > 0) {
+        let msg = `Conflict detected:\n`;
+        conflicts.forEach(c =>
+          msg += `- Course ${c.course} already has a class at ${c.time} with ${c.instructor}.\n`
+        );
+        const times = ['7:30', '9:30', '11:30', '1:30', '3:30-5:30']
+          .filter(t => !timetable.some(entry => entry.day === day && entry.time === t &&
+            (entry.instructor === instructor || entry.course === course || entry.unit === unit)));
+        msg += times.length > 0 ? `Suggested times: ${times.join(', ')}.` : `No available times on ${day}.`;
+        errorElement.textContent = msg;
+        return;
+      }
+      errorElement.textContent = '';
+      timetable.push({ day, course, unit, instructor, time });
+      saveTimetable(timetable);
+      loadTimetable();
+      timetableForm.reset();
+    });
+
+    if (sessionStorage.getItem('loggedInUser')) {
+      loginForm.style.display = 'none';
+      timetableSection.style.display = 'block';
+      loadTimetable();
+      if (sessionStorage.getItem('loggedInUserRole') === 'admin') {
+        timetableForm.style.display = 'block';
+        userManagement.style.display = 'block';
+        renderUserList();
+      }
+    }
+
+    function logout() {
+      sessionStorage.clear();
+      location.reload();
+    }
+  </script>
+</body>
+</html>
